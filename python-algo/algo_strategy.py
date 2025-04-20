@@ -174,9 +174,9 @@ class AlgoStrategy(gamelib.AlgoCore):
         return count
 
     def scout_defense_mode(self, game_state):
-    """
-    Build fast defense against Scout spam.
-    """
+        """
+        Build fast defense against Scout spam.
+        """
     # Defensive turrets at edges
     emergency_turrets = [[13, 12], [14, 12], [12, 11], [15, 11]]
     for loc in emergency_turrets:
