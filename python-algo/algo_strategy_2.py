@@ -31,6 +31,7 @@ class AlgoStrategy(gamelib.AlgoCore):
 
     def on_turn(self, turn_state):
         game_state = gamelib.GameState(self.config, turn_state)
+        game_state.attempt_spawn(DEMOLISHER, [24, 10], 3)
         game_state.suppress_warnings(False)
 
         self.my_strategy_1(game_state)
