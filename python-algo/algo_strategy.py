@@ -47,6 +47,11 @@ class AlgoStrategy(gamelib.AlgoCore):
         self.build_strong_defenses(game_state)
         self.reactive_defense(game_state)
 
+        enemy_scouts = self.detect_enemy_mobile_units(game_state, SCOUT)
+        if enemy_scouts > 5:
+            self.scout_defense_mode(game_state)
+
+
         if game_state.turn_number >= 3:
             enemy_interceptors = self.detect_enemy_mobile_units(game_state, INTERCEPTOR)
             if enemy_interceptors > 5:
@@ -167,6 +172,20 @@ class AlgoStrategy(gamelib.AlgoCore):
                 if unit.player_index == 1 and unit.unit_type == unit_type:
                     count += 1
         return count
+
+    def scout_defense_mode(self, game_state):
+    """
+    Build fast defense against Scout spam.
+    """
+    # Defensive turrets at edges
+    emergency_turrets = [[13, 12], [14, 12], [12, 11], [15, 11]]
+    for loc in emergency_turrets:
+        game_state.attempt_spawn(TURRET, loc)
+        game_state.attempt_upgrade(loc)
+
+    # Send interceptors
+    if game_state.get_resource(MP) >= 2:
+        game_state.attempt_spawn(INTERCEPTOR, [13, 0], 2)
 
 
     def filter_blocked_locations(self, locations, game_state):
