@@ -28,51 +28,51 @@ class AlgoStrategy(gamelib.AlgoCore):
 
     def on_turn(self, turn_state):
         game_state = gamelib.GameState(self.config, turn_state)
-        game_state.attempt_spawn(DEMOLISHER, [24, 10], 3)
-
         game_state.suppress_warnings(False)
 
-        self.pro_strategy(game_state)
+        self.smart_strategy(game_state)
 
         game_state.submit_turn()
 
-    def pro_strategy(self, game_state):
-        self.build_full_defense(game_state)
+    def smart_strategy(self, game_state):
+        self.build_defenses(game_state)
         self.reactive_defense(game_state)
 
         enemy_scouts = self.detect_enemy_mobile_units(game_state, SCOUT)
         enemy_turrets = self.detect_enemy_unit(game_state, unit_type=TURRET)
 
-        # Emergency defense if they Scout rush
+        if game_state.turn_number <= 1:
+            self.cheese_rush(game_state)
+            return
+        
+        # Emergency defense if they spam Scouts
         if enemy_scouts > 5:
-            self.spawn_interceptors(game_state)
+            self.emergency_defense(game_state)
 
-        # Attack only after strong defense built
-        if game_state.turn_number >= 5:
-            if enemy_turrets <= 4 and game_state.get_resource(MP) >= 8:
-                self.smart_scout_attack(game_state)
+        # If no enemy turrets, Scout swarm attack
+        if enemy_turrets == 0 and game_state.get_resource(MP) >= 6:
+            self.scout_rush(game_state)
+        else:
+            if game_state.get_resource(MP) >= 10:
+                self.scout_rush(game_state)
 
-        # Extra Supports if spare SP
+        # Extra supports for later scaling
         if game_state.get_resource(SP) >= 10:
             self.build_extra_supports(game_state)
 
-    def build_full_defense(self, game_state):
-        # Double walls
-        wall_locations = [[13,13],[14,13],[12,13],[15,13],[11,13],[16,13],
-                          [13,12],[14,12],[12,12],[15,12],[11,12],[16,12]]
-        # Front turrets
-        turret_locations = [[3,12],[24,12],[13,11],[14,11]]
+    def build_defenses(self, game_state):
+        # Double layered wall + turrets at middle
+        walls = [[13,13],[14,13],[12,13],[15,13],[13,12],[14,12]]
+        turrets = [[3,12],[24,12],[13,12],[14,12]]
 
-        for loc in wall_locations:
-            game_state.attempt_spawn(WALL, loc)
-            game_state.attempt_upgrade(loc)
-
-        for loc in turret_locations:
-            game_state.attempt_spawn(TURRET, loc)
-            game_state.attempt_upgrade(loc)
+        for location in walls:
+            game_state.attempt_spawn(WALL, location)
+        for location in turrets:
+            game_state.attempt_spawn(TURRET, location)
+            game_state.attempt_upgrade(location)
 
     def build_extra_supports(self, game_state):
-        support_locations = [[13,2],[14,2],[12,2],[15,2],[13,3],[14,3]]
+        support_locations = [[13,2],[14,2],[13,3],[14,3],[12,2],[15,2]]
         game_state.attempt_spawn(SUPPORT, support_locations)
         for loc in support_locations:
             game_state.attempt_upgrade(loc)
@@ -84,22 +84,35 @@ class AlgoStrategy(gamelib.AlgoCore):
             game_state.attempt_spawn(WALL, repair_location)
             game_state.attempt_upgrade(repair_location)
 
-    def spawn_interceptors(self, game_state):
-        if game_state.get_resource(MP) >= 2:
-            game_state.attempt_spawn(INTERCEPTOR, [13, 0], 2)
+    def scout_rush(self, game_state):
+        best_location = self.choose_attack_side(game_state)
+        game_state.attempt_spawn(SCOUT, best_location, 1000)
 
-    def smart_scout_attack(self, game_state):
-        spawn_side = self.choose_attack_side(game_state)
-        game_state.attempt_spawn(SCOUT, spawn_side, 1000)
+    def cheese_rush(self, game_state):
+        spawn_locations = [[13,0],[14,0]]
+        best_location = self.least_damage_spawn_location(game_state, spawn_locations)
+        game_state.attempt_spawn(SCOUT, best_location, 1000)
 
-    def choose_attack_side(self, game_state):
-        left_units = self.detect_enemy_unit(game_state, valid_x=range(0,14))
-        right_units = self.detect_enemy_unit(game_state, valid_x=range(14,28))
+    def emergency_defense(self, game_state):
+        # Emergency turrets against Scout spam
+        emergency_turrets = [[12,11], [15,11], [13,11], [14,11]]
+        for loc in emergency_turrets:
+            game_state.attempt_spawn(TURRET, loc)
+            game_state.attempt_upgrade(loc)
 
-        if left_units < right_units:
-            return [13,0]  # Attack left
-        else:
-            return [14,0]  # Attack right
+        # Emergency interceptors
+        if game_state.get_resource(MP) >= 3:
+            game_state.attempt_spawn(INTERCEPTOR, [13,0], 2)
+
+    def least_damage_spawn_location(self, game_state, location_options):
+        damages = []
+        for location in location_options:
+            path = game_state.find_path_to_edge(location)
+            damage = 0
+            for path_location in path:
+                damage += len(game_state.get_attackers(path_location, 0)) * gamelib.GameUnit(TURRET, game_state.config).damage_i
+            damages.append(damage)
+        return location_options[damages.index(min(damages))]
 
     def detect_enemy_unit(self, game_state, unit_type=None, valid_x=None, valid_y=None):
         total_units = 0
@@ -120,6 +133,18 @@ class AlgoStrategy(gamelib.AlgoCore):
                     if unit.player_index == 1 and unit.unit_type == unit_type:
                         count += 1
         return count
+
+    def choose_attack_side(self, game_state):
+        """
+        Decide whether to attack left or right side based on enemy unit counts.
+        """
+        left_units = self.detect_enemy_unit(game_state, valid_x=range(0, 14))
+        right_units = self.detect_enemy_unit(game_state, valid_x=range(14, 28))
+
+        if left_units < right_units:
+            return [13, 0]  # attack left
+        else:
+            return [14, 0]  # attack right
 
     def on_action_frame(self, turn_string):
         state = json.loads(turn_string)
