@@ -47,6 +47,16 @@ class AlgoStrategy(gamelib.AlgoCore):
         self.build_strong_defenses(game_state)
         self.reactive_defense(game_state)
 
+        if game_state.turn_number >= 3:
+            enemy_interceptors = self.detect_enemy_mobile_units(game_state, INTERCEPTOR)
+            if enemy_interceptors > 5:
+              self.scout_rush(game_state)
+            elif self.detect_enemy_unit(game_state, unit_type=TURRET, valid_x=None, valid_y=[14, 15]) > 4:
+                self.demolisher_attack(game_state)
+            else:
+                self.scout_rush(game_state)
+
+
         # Smart Economy Decisions
         if game_state.get_resource(SP) > 15:
             self.upgrade_defenses(game_state)
@@ -67,7 +77,7 @@ class AlgoStrategy(gamelib.AlgoCore):
 
     def build_strong_defenses(self, game_state):
         walls = [[0, 13], [1, 13], [2, 13], [3, 13], [24, 13], [25, 13], [26, 13], [27, 13]]
-        turrets = [[3, 12], [24, 12]]
+        turrets = [[3, 12], [24, 12], [6, 11], [21, 11]]
         supports = [[13, 2], [14, 2], [13, 3], [14, 3]]
 
         for location in walls:
@@ -146,6 +156,18 @@ class AlgoStrategy(gamelib.AlgoCore):
                     if unit.player_index == 1 and (unit_type is None or unit.unit_type == unit_type) and (valid_x is None or location[0] in valid_x) and (valid_y is None or location[1] in valid_y):
                         total_units += 1
         return total_units
+    
+    def detect_enemy_mobile_units(self, game_state, unit_type):
+        count = 0
+        for location in game_state.game_map:
+            if game_state.contains_stationary_unit(location):
+                continue
+            units = game_state.game_map[location]
+            for unit in units:
+                if unit.player_index == 1 and unit.unit_type == unit_type:
+                    count += 1
+        return count
+
 
     def filter_blocked_locations(self, locations, game_state):
         filtered = []
