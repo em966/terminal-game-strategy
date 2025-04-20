@@ -5,20 +5,6 @@ import warnings
 from sys import maxsize
 import json
 
-
-"""
-Most of the algo code you write will be in this file unless you create new
-modules yourself. Start by modifying the 'on_turn' function.
-
-Advanced strategy tips: 
-
-  - You can analyze action frames by modifying on_action_frame function
-
-  - The GameState.map object can be manually manipulated to create hypothetical 
-  board states. Though, we recommended making a copy of the map to preserve 
-  the actual current map state.
-"""
-
 class AlgoStrategy(gamelib.AlgoCore):
     def __init__(self):
         super().__init__()
@@ -27,8 +13,8 @@ class AlgoStrategy(gamelib.AlgoCore):
         gamelib.debug_write('Random seed: {}'.format(seed))
 
     def on_game_start(self, config):
-        """ 
-        Read in config and perform any initial setup here 
+        """
+        Read in config and perform any initial setup here
         """
         gamelib.debug_write('Configuring your custom algo strategy...')
         self.config = config
@@ -41,159 +27,118 @@ class AlgoStrategy(gamelib.AlgoCore):
         INTERCEPTOR = config["unitInformation"][5]["shorthand"]
         MP = 1
         SP = 0
-        # This is a good place to do initial setup
         self.scored_on_locations = []
 
     def on_turn(self, turn_state):
         game_state = gamelib.GameState(self.config, turn_state)
         game_state.attempt_spawn(DEMOLISHER, [24, 10], 3)
-        gamelib.debug_write('Performing turn {} of your custom algo strategy'.format(game_state.turn_number))
-        game_state.suppress_warnings(False)  #Comment or remove this line to enable warnings (I've changed it to false for now).
+        game_state.suppress_warnings(False)
 
-        # removed this: self.starter_strategy(game_state)and replaced with below
         self.my_strategy_1(game_state)
 
         game_state.submit_turn()
 
-
-    """
-    NOTE: All the methods after this point are part of the sample starter-algo
-    strategy and can safely be replaced for your custom algo.
-    """
-
     def my_strategy_1(self, game_state):
-        """
-        For defense we will use a spread out layout and some interceptors early on.
-        We will place turrets near locations the opponent managed to score on.
-        For offense we will use long range demolishers if they place stationary units near the enemy's front.
-        If there are no stationary units to attack in the front, we will send Scouts to try and score quickly.
-        """
-        # First, place basic defenses
-        self.build_defences(game_state)
-        # Now build reactive defenses based on where the enemy scored
-        self.build_reactive_defense(game_state)
+        # CHEESE RUSH early game
+        if game_state.turn_number == 0 or game_state.turn_number == 1:
+            self.cheese_rush(game_state)
+            return
 
-        if game_state.turn_number >= 10:
-            second_wall_line = [[0,12], [1,12], [2,12], [3,12], [4,12], [5,12], [6,12], [7,12], [8,12], [9,12],
-                    [18,12], [19,12], [20,12], [21,12], [22,12], [23,12], [24,12], [25,12], [26,12], [27,12]]
-            for location in second_wall_line:
-                game_state.attempt_spawn(WALL, location)
-                game_state.attempt_upgrade(location)
+        self.build_strong_defenses(game_state)
+        self.reactive_defense(game_state)
 
-        # If the turn is less than 5, stall with interceptors and wait to see enemy's base
-        if game_state.turn_number < 3:
-            self.stall_with_interceptors(game_state)
+        # Smart Economy Decisions
+        if game_state.get_resource(SP) > 15:
+            self.upgrade_defenses(game_state)
+
+        if game_state.get_resource(MP) > 12:
+            self.extra_supports(game_state)
+
+        if game_state.turn_number >= 5 and game_state.my_health < 15:
+            # Play very defensively if low health
+            self.heavy_defense_mode(game_state)
         else:
-            # Now let's analyze the enemy base to see where their defenses are concentrated.
-            # If they have many units in the front we can build a line for our demolishers to attack them at long range.
-            if self.detect_enemy_unit(game_state, unit_type=TURRET, valid_x=None, valid_y=[14, 15]) > 6:
-                self.demolisher_line_strategy(game_state)
-            else:
-                # They don't have many units in the front so lets figure out their least defended area and send Scouts there.
+            # Normal attack logic
+            if game_state.turn_number >= 3:
+                if self.detect_enemy_unit(game_state, unit_type=TURRET, valid_x=None, valid_y=[14, 15]) > 4:
+                    self.demolisher_attack(game_state)
+                else:
+                    self.scout_rush(game_state)
 
-                if game_state.get_resource(MP) >= 8:
-                    scout_spawn_location_options = [[13, 0], [14, 0]]
-                    best_location = self.least_damage_spawn_location(game_state, scout_spawn_location_options)
-                    game_state.attempt_spawn(SCOUT, best_location, 1000)
+    def build_strong_defenses(self, game_state):
+        walls = [[0, 13], [1, 13], [2, 13], [3, 13], [24, 13], [25, 13], [26, 13], [27, 13]]
+        turrets = [[3, 12], [24, 12]]
+        supports = [[13, 2], [14, 2], [13, 3], [14, 3]]
 
-                # Lastly, if we have spare SP, let's build some supports
-                support_locations = [[13, 2], [14, 2], [13, 3], [14, 3]]
-                game_state.attempt_spawn(SUPPORT, support_locations)
-
-    
-    def build_defences(self, game_state):
-        # Useful tool for setting up your base locations: https://www.kevinbai.design/terminal-map-maker
-        # More community tools available at: https://terminal.c1games.com/rules#Download
-
-    # first draft of defence play:
-
-    # Build a simple wall in front
-        important_walls = [[0, 13], [1, 13], [2, 13], [3, 13], [10, 13], [11, 13], [12, 13], [15, 13], [16, 13], [17, 13], [24, 13], [25, 13], [26, 13], [27, 13]]
-        for location in important_walls:
+        for location in walls:
             game_state.attempt_spawn(WALL, location)
+        for location in turrets:
+            game_state.attempt_spawn(TURRET, location)
+        game_state.attempt_spawn(SUPPORT, supports)
+
+    def reactive_defense(self, game_state):
+        for location in self.scored_on_locations:
+            repair_location = [location[0], location[1]+1]
+            game_state.attempt_spawn(TURRET, repair_location)
+            game_state.attempt_spawn(WALL, repair_location)
+            game_state.attempt_upgrade(repair_location)
+
+    def upgrade_defenses(self, game_state):
+        wall_upgrades = [[0,13], [1,13], [26,13], [27,13]]
+        support_upgrades = [[13,2], [14,2]]
+        turret_upgrades = [[3,12], [24,12]]
+
+        for location in wall_upgrades:
+            game_state.attempt_upgrade(location)
+        for location in support_upgrades:
+            game_state.attempt_upgrade(location)
+        for location in turret_upgrades:
             game_state.attempt_upgrade(location)
 
+    def extra_supports(self, game_state):
+        extra_support_locations = [[12, 3], [15, 3], [12, 4], [15, 4]]
+        game_state.attempt_spawn(SUPPORT, extra_support_locations)
+        for loc in extra_support_locations:
+            game_state.attempt_upgrade(loc)
 
-    # Build turrets behind walls
-        turret_locations = [[4, 12], [23, 12]]
-        for location in turret_locations:
-            game_state.attempt_spawn(TURRET, location)
+    def heavy_defense_mode(self, game_state):
+        wall_positions = [[i, 12] for i in range(5, 23)]
+        turret_positions = [[5, 11], [22, 11]]
 
+        for loc in wall_positions:
+            game_state.attempt_spawn(WALL, loc)
+        for loc in turret_positions:
+            game_state.attempt_spawn(TURRET, loc)
+            game_state.attempt_upgrade(loc)
 
-    def build_reactive_defense(self, game_state):
-        """
-        This function builds reactive defenses based on where the enemy scored on us from.
-        We can track where the opponent scored by looking at events in action frames 
-        as shown in the on_action_frame function
-        """
-        for location in self.scored_on_locations:
-            # Build turret one space above so that it doesn't block our own edge spawn locations
-            build_location = [location[0], location[1]+1]
-            game_state.attempt_spawn(WALL, build_location)
-            game_state.attempt_upgrade(build_location)
-            game_state.attempt_spawn(TURRET, build_location)
-        
-    def stall_with_interceptors(self, game_state):
-        """
-        Send out interceptors to defend our base from enemy moving units.
-        Prioritize spawning near middle first.
-        """
-        middle_locations = [[13, 0], [14, 0]]
-        deploy_locations = self.filter_blocked_locations(middle_locations, game_state)
+    def demolisher_attack(self, game_state):
+        wall_line = [[i,11] for i in range(5, 23, 3)]
+        for location in wall_line:
+            game_state.attempt_spawn(WALL, location)
 
-    # Fallback if middle is blocked
-        if len(deploy_locations) == 0:
-            friendly_edges = game_state.game_map.get_edge_locations(game_state.game_map.BOTTOM_LEFT) + game_state.game_map.get_edge_locations(game_state.game_map.BOTTOM_RIGHT)
-            deploy_locations = self.filter_blocked_locations(friendly_edges, game_state)
+        game_state.attempt_spawn(DEMOLISHER, [13, 0], 1000)
 
-    # While we have MP and locations to spawn
-        while game_state.get_resource(MP) >= game_state.type_cost(INTERCEPTOR)[MP] and len(deploy_locations) > 0:
-            deploy_location = random.choice(deploy_locations)
-            game_state.attempt_spawn(INTERCEPTOR, deploy_location)
+    def scout_rush(self, game_state):
+        spawn_options = [[13, 0], [14, 0]]
+        best_spawn = self.least_damage_spawn_location(game_state, spawn_options)
+        game_state.attempt_spawn(SCOUT, best_spawn, 1000)
 
-
-    def demolisher_line_strategy(self, game_state):
-        """
-        Build a line of the cheapest stationary unit so our demolisher can attack from long range.
-        """
-        # First let's figure out the cheapest unit
-        # We could just check the game rules, but this demonstrates how to use the GameUnit class
-        stationary_units = [WALL, TURRET, SUPPORT]
-        cheapest_unit = WALL
-        for unit in stationary_units:
-            unit_class = gamelib.GameUnit(unit, game_state.config)
-            if unit_class.cost[game_state.MP] < gamelib.GameUnit(cheapest_unit, game_state.config).cost[game_state.MP]:
-                cheapest_unit = unit
-
-        # Now let's build out a line of stationary units (but only every second square to save on SP). This will prevent our demolisher from running into the enemy base.
-        # Instead they will stay at the perfect distance to attack the front two rows of the enemy base.
-        for x in range(27, 5, -2):
-            game_state.attempt_spawn(cheapest_unit, [x, 11])
-
-        # Now spawn demolishers next to the line
-        # By asking attempt_spawn to spawn 1000 units, it will essentially spawn as many as we have resources for
-        game_state.attempt_spawn(DEMOLISHER, [24, 10], 1000)
+    def cheese_rush(self, game_state):
+        rush_locations = [[13, 0], [14, 0]]
+        best_location = self.least_damage_spawn_location(game_state, rush_locations)
+        game_state.attempt_spawn(SCOUT, best_location, 1000)
 
     def least_damage_spawn_location(self, game_state, location_options):
-        """
-        This function will help us guess which location is the safest to spawn moving units from.
-        It gets the path the unit will take then checks locations on that path to 
-        estimate the path's damage risk.
-        """
         damages = []
-        # Get the damage estimate each path will take
         for location in location_options:
             path = game_state.find_path_to_edge(location)
             damage = 0
             for path_location in path:
-                # Get number of enemy turrets that can attack each location and multiply by turret damage
                 damage += len(game_state.get_attackers(path_location, 0)) * gamelib.GameUnit(TURRET, game_state.config).damage_i
             damages.append(damage)
-        
-        # Now just return the location that takes the least damage
         return location_options[damages.index(min(damages))]
 
-    def detect_enemy_unit(self, game_state, unit_type=None, valid_x = None, valid_y = None):
+    def detect_enemy_unit(self, game_state, unit_type=None, valid_x=None, valid_y=None):
         total_units = 0
         for location in game_state.game_map:
             if game_state.contains_stationary_unit(location):
@@ -201,7 +146,7 @@ class AlgoStrategy(gamelib.AlgoCore):
                     if unit.player_index == 1 and (unit_type is None or unit.unit_type == unit_type) and (valid_x is None or location[0] in valid_x) and (valid_y is None or location[1] in valid_y):
                         total_units += 1
         return total_units
-        
+
     def filter_blocked_locations(self, locations, game_state):
         filtered = []
         for location in locations:
@@ -210,21 +155,12 @@ class AlgoStrategy(gamelib.AlgoCore):
         return filtered
 
     def on_action_frame(self, turn_string):
-        """
-        This is the action frame of the game. This function could be called 
-        hundreds of times per turn and could slow the algo down so avoid putting slow code here.
-        Processing the action frames is complicated so we only suggest it if you have time and experience.
-        Full doc on format of a game frame at in json-docs.html in the root of the Starterkit.
-        """
-        # Let's record at what position we get scored on
         state = json.loads(turn_string)
         events = state["events"]
         breaches = events["breach"]
         for breach in breaches:
             location = breach[0]
             unit_owner_self = True if breach[4] == 1 else False
-            # When parsing the frame data directly, 
-            # 1 is integer for yourself, 2 is opponent (StarterKit code uses 0, 1 as player_index instead)
             if not unit_owner_self:
                 gamelib.debug_write("Got scored on at: {}".format(location))
                 self.scored_on_locations.append(location)
