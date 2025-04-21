@@ -72,7 +72,7 @@ class AlgoStrategy(gamelib.AlgoCore):
             game_state.attempt_upgrade(loc)
 
     def build_extra_supports(self, game_state):
-        support_locations = [[13,2],[14,2],[12,2],[15,2],[13,3],[14,3]]
+        support_locations = [[13,2],[14,2],[12,3],[15,3],[13,3],[14,3]]
         game_state.attempt_spawn(SUPPORT, support_locations)
         for loc in support_locations:
             game_state.attempt_upgrade(loc)
