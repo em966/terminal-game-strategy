@@ -13,7 +13,7 @@ class AlgoStrategy(gamelib.AlgoCore):
         gamelib.debug_write('Random seed: {}'.format(seed))
 
     def on_game_start(self, config):
-        gamelib.debug_write('Setting up PressureWave Strategy...')
+        gamelib.debug_write('Configuring ultimate aggressive strategy...')
         self.config = config
         global WALL, SUPPORT, TURRET, SCOUT, DEMOLISHER, INTERCEPTOR, MP, SP
         WALL = config["unitInformation"][0]["shorthand"]
@@ -30,85 +30,82 @@ class AlgoStrategy(gamelib.AlgoCore):
         game_state = gamelib.GameState(self.config, turn_state)
         game_state.suppress_warnings(False)
 
-        self.execute_pressure_strategy(game_state)
+        self.aggressive_strategy(game_state)
 
         game_state.submit_turn()
 
-    def execute_pressure_strategy(self, game_state):
-        self.build_defenses(game_state)
+    def aggressive_strategy(self, game_state):
+        self.minimal_defense(game_state)
         self.reactive_defense(game_state)
 
-        enemy_turrets = self.detect_enemy_unit(game_state, unit_type=TURRET)
-        enemy_scouts = self.detect_enemy_mobile_units(game_state, SCOUT)
+        # Emergency interception if getting hit badly
+        if game_state.turn_number > 3 and game_state.my_health < 15:
+            self.emergency_defense(game_state)
 
-        # Cheese rush very early
+        # First turn cheese rush
         if game_state.turn_number <= 1:
             self.cheese_rush(game_state)
             return
 
-        # Emergency defense if enemy Scout rushes
-        if enemy_scouts >= 5:
-            self.emergency_defense(game_state)
+        # Attack decision
+        if game_state.get_resource(MP) >= 6:
+            if self.detect_enemy_unit(game_state, unit_type=TURRET) <= 4:
+                self.scout_swarm(game_state)
+            else:
+                self.demolisher_line_push(game_state)
 
-        # Attack logic
-        if enemy_turrets <= 3 and game_state.get_resource(MP) >= 6:
-            self.scout_rush(game_state)
-        elif game_state.get_resource(MP) >= 10:
-            self.demolisher_push(game_state)
+        # Only build supports after turn 10 and plenty of SP
+        if game_state.turn_number > 10 and game_state.get_resource(SP) >= 8:
+            self.build_supports(game_state)
 
-        # Build extra Supports for late-game scaling
-        if game_state.get_resource(SP) >= 12:
-            self.build_extra_supports(game_state)
+    def minimal_defense(self, game_state):
+        basic_walls = [[13,11], [14,11], [12,11], [15,11]]
+        basic_turrets = [[13,10], [14,10]]
+        
+        game_state.attempt_spawn(WALL, basic_walls)
+        for wall in basic_walls:
+            game_state.attempt_upgrade(wall)
 
-    def build_defenses(self, game_state):
-        walls = [
-            [13,13],[14,13],[12,13],[15,13],[11,13],[16,13],
-            [13,12],[14,12],[12,12],[15,12]
-        ]
-        turrets = [[3,12],[24,12],[13,11],[14,11]]
+        game_state.attempt_spawn(TURRET, basic_turrets)
+        for turret in basic_turrets:
+            game_state.attempt_upgrade(turret)
 
-        for location in walls:
-            game_state.attempt_spawn(WALL, location)
-            game_state.attempt_upgrade(location)
-
-        for location in turrets:
-            game_state.attempt_spawn(TURRET, location)
-            game_state.attempt_upgrade(location)
-
-    def build_extra_supports(self, game_state):
-        support_locations = [[13,3],[14,3],[13,4],[14,4],[12,3],[15,3]]
+    def build_supports(self, game_state):
+        support_locations = [[13,2],[14,2],[12,3],[15,3]]
         game_state.attempt_spawn(SUPPORT, support_locations)
         for loc in support_locations:
             game_state.attempt_upgrade(loc)
 
-    def reactive_defense(self, game_state):
-        for location in self.scored_on_locations:
-            repair_location = [location[0], location[1]+1]
-            game_state.attempt_spawn(TURRET, repair_location)
-            game_state.attempt_spawn(WALL, repair_location)
-            game_state.attempt_upgrade(repair_location)
-
     def cheese_rush(self, game_state):
-        spawn_locations = [[13,0],[14,0]]
-        best_location = self.least_damage_spawn_location(game_state, spawn_locations)
-        game_state.attempt_spawn(SCOUT, best_location, 1000)
-
-    def scout_rush(self, game_state):
+        # Full scout rush early
         spawn_options = [[13,0],[14,0]]
         best_location = self.least_damage_spawn_location(game_state, spawn_options)
         game_state.attempt_spawn(SCOUT, best_location, 1000)
 
-    def demolisher_push(self, game_state):
-        # Spawn Demolishers protected by some Interceptors
-        game_state.attempt_spawn(INTERCEPTOR, [13,0], 2)
-        game_state.attempt_spawn(DEMOLISHER, [13,0], 1000)
+    def scout_swarm(self, game_state):
+        spawn_options = [[13,0],[14,0]]
+        best_spawn = self.least_damage_spawn_location(game_state, spawn_options)
+        game_state.attempt_spawn(SCOUT, best_spawn, 1000)
+
+    def demolisher_line_push(self, game_state):
+        spawn_location = [13, 0]
+        game_state.attempt_spawn(DEMOLISHER, spawn_location, 1000)
 
     def emergency_defense(self, game_state):
-        # Quick walls and turrets when under heavy Scout attack
-        emergency_locations = [[12,11],[15,11],[13,11],[14,11]]
-        for loc in emergency_locations:
+        emergency_turrets = [[11,10],[16,10]]
+        for loc in emergency_turrets:
             game_state.attempt_spawn(TURRET, loc)
             game_state.attempt_upgrade(loc)
+        if game_state.get_resource(MP) >= 3:
+            game_state.attempt_spawn(INTERCEPTOR, [13,0], 3)
+
+    def reactive_defense(self, game_state):
+        for location in self.scored_on_locations:
+            repair_loc = [location[0], location[1]+1]
+            game_state.attempt_spawn(WALL, repair_loc)
+            game_state.attempt_upgrade(repair_loc)
+            game_state.attempt_spawn(TURRET, repair_loc)
+            game_state.attempt_upgrade(repair_loc)
 
     def least_damage_spawn_location(self, game_state, location_options):
         damages = []
@@ -121,35 +118,24 @@ class AlgoStrategy(gamelib.AlgoCore):
         return location_options[damages.index(min(damages))]
 
     def detect_enemy_unit(self, game_state, unit_type=None, valid_x=None, valid_y=None):
-        total_units = 0
+        total = 0
         for location in game_state.game_map:
             if game_state.contains_stationary_unit(location):
                 for unit in game_state.game_map[location]:
                     if unit.player_index == 1 and (unit_type is None or unit.unit_type == unit_type):
                         if (valid_x is None or location[0] in valid_x) and (valid_y is None or location[1] in valid_y):
-                            total_units += 1
-        return total_units
-
-    def detect_enemy_mobile_units(self, game_state, unit_type):
-        count = 0
-        for location in game_state.game_map:
-            if not game_state.contains_stationary_unit(location):
-                units = game_state.game_map[location]
-                for unit in units:
-                    if unit.player_index == 1 and unit.unit_type == unit_type:
-                        count += 1
-        return count
+                            total += 1
+        return total
 
     def on_action_frame(self, turn_string):
         state = json.loads(turn_string)
-        events = state["events"]
-        breaches = events["breach"]
+        breaches = state["events"]["breach"]
         for breach in breaches:
-            location = breach[0]
+            loc = breach[0]
             unit_owner_self = True if breach[4] == 1 else False
             if not unit_owner_self:
-                gamelib.debug_write("Got scored on at: {}".format(location))
-                self.scored_on_locations.append(location)
+                gamelib.debug_write('Breach at: {}'.format(loc))
+                self.scored_on_locations.append(loc)
 
 if __name__ == "__main__":
     algo = AlgoStrategy()
