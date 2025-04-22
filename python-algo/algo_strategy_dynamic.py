@@ -28,19 +28,22 @@ class AlgoStrategy(gamelib.AlgoCore):
 
     def on_turn(self, turn_state):
         game_state = gamelib.GameState(self.config, turn_state)
+        game_state.attempt_spawn(DEMOLISHER, [24, 10], 3)
         game_state.suppress_warnings(False)
 
-        self.smart_strategy(game_state)
+        self.dynamic_strategy(game_state)
 
         game_state.submit_turn()
 
-    def smart_strategy(self, game_state):
+    def dynamic_strategy(self, game_state):
         self.build_defenses(game_state)
+        self.build_funnels(game_state)
         self.reactive_defense(game_state)
-
+        
         enemy_scouts = self.detect_enemy_mobile_units(game_state, SCOUT)
         enemy_turrets = self.detect_enemy_unit(game_state, unit_type=TURRET)
-
+        
+        # Early attack, cheese rush
         if game_state.turn_number <= 1:
             self.cheese_rush(game_state)
             return
@@ -49,33 +52,53 @@ class AlgoStrategy(gamelib.AlgoCore):
         if enemy_scouts > 5:
             self.emergency_defense(game_state)
 
-        # If no enemy turrets, Scout swarm attack
-        if enemy_turrets == 0 and game_state.get_resource(MP) >= 6:
-            self.scout_rush(game_state)
-        else:
-            if game_state.get_resource(MP) >= 10:
-                self.scout_rush(game_state)
+        # Keep building 1-2 interceptors every few turns
+        if game_state.turn_number % 2 == 0:
+            self.spawn_interceptors(game_state)
 
-        # Extra supports for later scaling
+        # Attack decisions based on enemy turrets and our MP
+        if game_state.turn_number >= 5:
+            if enemy_turrets <= 4 and game_state.get_resource(MP) >= 8:
+                self.smart_scout_rush(game_state)
+            elif enemy_turrets > 4 and game_state.get_resource(MP) >= 8:
+                self.demolisher_push(game_state)
+
+        # Extra supports if resources allow
         if game_state.get_resource(SP) >= 10:
             self.build_extra_supports(game_state)
 
+    # Builds a full defense with more walls and upgrades than scout rush strat
     def build_defenses(self, game_state):
-        # Double layered wall + turrets at middle
-        walls = [[13,13],[14,13],[12,13],[15,13],[13,12],[14,12]]
-        turrets = [[3,12],[24,12],[13,12],[14,12]]
+        walls = [
+            [13,13],[14,13],[12,13],[15,13],[11,13],[16,13],
+            [13,12],[14,12],[12,12],[15,12],[11,12],[16,12],
+            [13,11],[14,11],[12,11],[15,11]
+        ]
+        turrets = [[3,12],[24,12],[13,10],[14,10]]
 
         for location in walls:
             game_state.attempt_spawn(WALL, location)
+            game_state.attempt_upgrade(location)
+
         for location in turrets:
             game_state.attempt_spawn(TURRET, location)
             game_state.attempt_upgrade(location)
 
     def build_extra_supports(self, game_state):
-        support_locations = [[13,2],[14,2],[13,3],[14,3],[12,3],[15,3]]
+        support_locations = [[13,3],[14,3],[13,4],[14,4],[12,3],[15,3]]
         game_state.attempt_spawn(SUPPORT, support_locations)
         for loc in support_locations:
             game_state.attempt_upgrade(loc)
+
+    # Builds a funnel to block enemy units and turrets and channel attacks
+    def build_funnels(self, game_state):
+        funnel_walls = [[12,1],[13,1],[14,1],[15,1],[12,2],[13,2],[14,2],[15,2]]
+        game_state.attempt_spawn(WALL, funnel_walls)
+        game_state.attempt_upgrade(funnel_walls)
+
+    def spawn_interceptors(self, game_state):
+        if game_state.get_resource(MP) >= 2:
+            game_state.attempt_spawn(INTERCEPTOR, [13,0], 2)
 
     def reactive_defense(self, game_state):
         for location in self.scored_on_locations:
@@ -84,25 +107,39 @@ class AlgoStrategy(gamelib.AlgoCore):
             game_state.attempt_spawn(WALL, repair_location)
             game_state.attempt_upgrade(repair_location)
 
-    def scout_rush(self, game_state):
-        best_location = self.choose_attack_side(game_state)
-        game_state.attempt_spawn(SCOUT, best_location, 1000)
-
     def cheese_rush(self, game_state):
         spawn_locations = [[13,0],[14,0]]
         best_location = self.least_damage_spawn_location(game_state, spawn_locations)
         game_state.attempt_spawn(SCOUT, best_location, 1000)
 
     def emergency_defense(self, game_state):
-        # Emergency turrets against Scout spam
-        emergency_turrets = [[12,11], [15,11], [13,11], [14,11]]
+        emergency_turrets = [[12,10],[15,10],[13,10],[14,10]]
         for loc in emergency_turrets:
             game_state.attempt_spawn(TURRET, loc)
             game_state.attempt_upgrade(loc)
-
-        # Emergency interceptors
+        # Added interceptors for emergency defense
         if game_state.get_resource(MP) >= 3:
             game_state.attempt_spawn(INTERCEPTOR, [13,0], 2)
+
+    def smart_scout_rush(self, game_state):
+        spawn_options = [[13,0],[14,0]]
+        best_spawn = self.best_path_spawn(game_state, spawn_options)
+        game_state.attempt_spawn(SCOUT, best_spawn, 1000)
+
+    def demolisher_push(self, game_state):
+        game_state.attempt_spawn(DEMOLISHER, [13,0], 1000)
+
+    def best_path_spawn(self, game_state, spawn_options):
+        damages = []
+        for location in spawn_options:
+            path = game_state.find_path_to_edge(location)
+            damage = 0
+            for path_location in path:
+                attackers = game_state.get_attackers(path_location, 0)
+                for unit in attackers:
+                    damage += unit.damage_i
+            damages.append(damage)
+        return spawn_options[damages.index(min(damages))]
 
     def least_damage_spawn_location(self, game_state, location_options):
         damages = []
@@ -133,18 +170,6 @@ class AlgoStrategy(gamelib.AlgoCore):
                     if unit.player_index == 1 and unit.unit_type == unit_type:
                         count += 1
         return count
-
-    def choose_attack_side(self, game_state):
-        """
-        Decide whether to attack left or right side based on enemy unit counts.
-        """
-        left_units = self.detect_enemy_unit(game_state, valid_x=range(0, 14))
-        right_units = self.detect_enemy_unit(game_state, valid_x=range(14, 28))
-
-        if left_units < right_units:
-            return [13, 0]  # attack left
-        else:
-            return [14, 0]  # attack right
 
     def on_action_frame(self, turn_string):
         state = json.loads(turn_string)
