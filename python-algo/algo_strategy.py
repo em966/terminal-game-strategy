@@ -13,7 +13,7 @@ class AlgoStrategy(gamelib.AlgoCore):
         gamelib.debug_write('Random seed: {}'.format(seed))
 
     def on_game_start(self, config):
-        gamelib.debug_write('Configuring your inspired strategy...')
+        gamelib.debug_write('Configuring Inspired Strategy...')
         self.config = config
         global WALL, SUPPORT, TURRET, SCOUT, DEMOLISHER, INTERCEPTOR, MP, SP
         WALL = config["unitInformation"][0]["shorthand"]
@@ -36,62 +36,80 @@ class AlgoStrategy(gamelib.AlgoCore):
 
     def inspired_strategy(self, game_state):
         self.build_defenses(game_state)
-        self.build_funnel_barriers(game_state)
         self.reactive_defense(game_state)
 
         enemy_scouts = self.detect_enemy_mobile_units(game_state, SCOUT)
         enemy_turrets = self.detect_enemy_unit(game_state, unit_type=TURRET)
 
-        if game_state.turn_number <= 2:
+        if game_state.turn_number <= 1:
+            self.initial_attack(game_state)
             return
 
-        # Emergency defense if heavy scout rush
         if enemy_scouts > 5:
             self.emergency_defense(game_state)
 
-        # Interceptor patrol every 2 turns
-        if game_state.turn_number % 2 == 0 and game_state.get_resource(MP) >= 2:
+        if game_state.turn_number <= 2 and game_state.get_resource(MP) >= 2:
             game_state.attempt_spawn(INTERCEPTOR, [13, 0], 2)
 
-        # Attack if MP is high enough
-        if game_state.get_resource(MP) >= 10:
+        if game_state.turn_number >= 12 and game_state.get_resource(MP) >= 15:
+            self.demolisher_scout_combo(game_state)
+        elif enemy_turrets == 0 and game_state.get_resource(MP) >= 6:
+            self.scout_rush(game_state)
+        elif game_state.get_resource(MP) >= 10:
             self.scout_rush(game_state)
 
-        # Build extra supports later
-        if game_state.get_resource(SP) >= 10:
-            self.build_extra_supports(game_state)
+        if game_state.get_resource(SP) >= 8:
+            self.expand_supports(game_state)
 
     def build_defenses(self, game_state):
-        walls = [
+        wall_locations = [
             [0,13],[1,13],[2,13],[3,13],[4,13],[5,13],[6,13],[7,13],
-            [8,13],[9,13],[10,13],[11,13],[12,13],[13,13],[14,13],[15,13],[16,13],
-            [17,13],[18,13],[19,13],[20,13],[21,13],[22,13],[23,13],[24,13],[25,13],[26,13],[27,13]
+            [8,13],[9,13],[10,13],            [17,13],[18,13],[19,13],
+            [20,13],[21,13],[22,13],[23,13],[24,13],[25,13],[26,13],[27,13]
         ]
-        turrets = [[2,12],[25,12],[13,11],[14,11],[6,11],[21,11]]
+        turret_locations = [[3,12],[24,12],[13,11],[14,11]]
 
-        for location in walls:
-            game_state.attempt_spawn(WALL, location)
+        for loc in wall_locations:
+            game_state.attempt_spawn(WALL, loc)
 
-        for location in turrets:
-            game_state.attempt_spawn(TURRET, location)
-            game_state.attempt_upgrade(location)
+        for loc in turret_locations:
+            game_state.attempt_spawn(TURRET, loc)
+            game_state.attempt_upgrade(loc)
 
-    def build_funnel_barriers(self, game_state):
-        funnel = [[12,12], [15,12], [12,11], [15,11]]
-        game_state.attempt_spawn(WALL, funnel)
-
-    def build_extra_supports(self, game_state):
-        support_locations = [[13,2],[14,2],[13,3],[14,3],[12,3],[15,3]]
-        game_state.attempt_spawn(SUPPORT, support_locations)
-        for loc in support_locations:
+    def expand_supports(self, game_state):
+        support_locs = [[13,3],[14,3],[12,3],[15,3]]
+        game_state.attempt_spawn(SUPPORT, support_locs)
+        for loc in support_locs:
             game_state.attempt_upgrade(loc)
 
     def reactive_defense(self, game_state):
         for location in self.scored_on_locations:
             repair_location = [location[0], location[1]+1]
-            game_state.attempt_spawn(TURRET, repair_location)
             game_state.attempt_spawn(WALL, repair_location)
+            game_state.attempt_spawn(TURRET, repair_location)
             game_state.attempt_upgrade(repair_location)
+
+        gap_locations = [[13, 11], [14, 11]]
+        for loc in gap_locations:
+            if not game_state.contains_stationary_unit(loc):
+                game_state.attempt_spawn(WALL, loc)
+
+    def initial_attack(self, game_state):
+        spawn = [[13,0],[14,0]]
+        best = self.least_damage_spawn_location(game_state, spawn)
+        game_state.attempt_spawn(SCOUT, best, 8)
+
+    def massive_attack(self, game_state):
+        spawn = [[13,0],[14,0]]
+        best = self.choose_attack_side(game_state)
+        game_state.attempt_spawn(SCOUT, best, 20)
+        if game_state.get_resource(MP) > 15:
+            game_state.attempt_spawn(DEMOLISHER, best, 5)
+
+    def demolisher_scout_combo(self, game_state):
+        side = self.choose_attack_side(game_state)
+        game_state.attempt_spawn(DEMOLISHER, side, 3)
+        game_state.attempt_spawn(SCOUT, side, 100)
 
     def scout_rush(self, game_state):
         best_location = self.choose_attack_side(game_state)
@@ -102,6 +120,7 @@ class AlgoStrategy(gamelib.AlgoCore):
         for loc in emergency_turrets:
             game_state.attempt_spawn(TURRET, loc)
             game_state.attempt_upgrade(loc)
+
         if game_state.get_resource(MP) >= 3:
             game_state.attempt_spawn(INTERCEPTOR, [13,0], 2)
 
@@ -136,13 +155,15 @@ class AlgoStrategy(gamelib.AlgoCore):
         return count
 
     def choose_attack_side(self, game_state):
-        left_units = self.detect_enemy_unit(game_state, valid_x=range(0, 14))
-        right_units = self.detect_enemy_unit(game_state, valid_x=range(14, 28))
+        spawn_left = [13, 0]
+        spawn_right = [14, 0]
+        path_left = game_state.find_path_to_edge(spawn_left)
+        path_right = game_state.find_path_to_edge(spawn_right)
 
-        if game_state.turn_number < 6:
-            return [13, 0] if left_units < right_units else [14, 0]
-        else:
-            return [6, 7] if left_units < right_units else [21, 7]
+        left_damage = sum([len(game_state.get_attackers(p, 0)) for p in path_left])
+        right_damage = sum([len(game_state.get_attackers(p, 0)) for p in path_right])
+
+        return spawn_left if left_damage < right_damage else spawn_right
 
     def on_action_frame(self, turn_string):
         state = json.loads(turn_string)
@@ -154,7 +175,6 @@ class AlgoStrategy(gamelib.AlgoCore):
             if not unit_owner_self:
                 gamelib.debug_write("Got scored on at: {}".format(location))
                 self.scored_on_locations.append(location)
-                gamelib.debug_write("All locations: {}".format(self.scored_on_locations))
 
 if __name__ == "__main__":
     algo = AlgoStrategy()
