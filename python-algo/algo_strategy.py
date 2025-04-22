@@ -62,18 +62,29 @@ class AlgoStrategy(gamelib.AlgoCore):
             self.build_extra_supports(game_state)
 
 
-
-
     def build_defenses(self, game_state):
-        # Double layered wall + turrets at middle
-        walls = [[13,13],[14,13],[12,13],[15,13],[13,12],[14,12]]
-        turrets = [[3,12],[24,12],[13,12],[14,12]]
+    # Stronger wall and turret build at the start
+        walls = [
+            [13,13],[14,13],[12,13],[15,13],[11,13],[16,13],  # Extended width
+            [13,12],[14,12],[12,12],[15,12],[11,12],[16,12],  # Extra wall row
+            [10,11],[17,11]  # Even more edges
+        ]
+        turrets = [
+            [3,12],[24,12],  # Edge turrets to kill side scouts
+            [13,11],[14,11]  # Central turrets behind walls
+        ]
 
         for location in walls:
             game_state.attempt_spawn(WALL, location)
+            if game_state.get_resource(SP) >= 1:
+                game_state.attempt_upgrade(location)
+
         for location in turrets:
             game_state.attempt_spawn(TURRET, location)
-            game_state.attempt_upgrade(location)
+            if game_state.get_resource(SP) >= 2:
+                game_state.attempt_upgrade(location)
+
+
 
     def build_extra_supports(self, game_state):
         support_locations = [[13,2],[14,2],[13,3],[14,3],[12,3],[15,3]]
